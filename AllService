@@ -1,0 +1,111 @@
+/**
+ * 
+ */
+package test;
+
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Random;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import jp.terasoluna.fw.dao.UpdateDAO;
+import jp.terasoluna.fw.util.PropertyUtil;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+
+
+/**
+ * 
+ * 
+ */
+public class AllService {
+	private static Log log = LogFactory.getLog(AllService.class);
+
+	private ServerSocket serverSocket;
+
+	private ExecutorService executorService;
+
+	public int startup() {
+		ApplicationContext context = new ClassPathXmlApplicationContext(
+				"batchContext.xml");
+		UpdateDAO updateDAO = (UpdateDAO) context.getBean("updateDAO");
+		
+		Properties pros = PropertyUtil
+				.loadProperties("ApplicationResources.properties");
+		int port = Integer.valueOf(pros.getProperty("server.port"));
+		int pool_count = Integer.valueOf(pros.getProperty("listen.count"));
+		int read_timeout = Integer.valueOf(pros.get("work.socket.timeout")
+				.toString());
+
+		executorService = Executors.newFixedThreadPool(pool_count);
+
+		try {
+			serverSocket = new ServerSocket(port);
+
+			Map<Integer, PostTask> taskMap = new HashMap<Integer, PostTask>();
+			for (int i = 0; i < pool_count; i++) {
+				PostTask task = new PostTask(i, updateDAO,
+						serverSocket, pros);
+				taskMap.put(i, task);
+			}
+
+			Random random = new Random();
+			List<Integer> keys = new ArrayList<Integer>(taskMap.keySet());
+			while (true) {
+				Integer randomKey = keys.get(random.nextInt(keys.size()));
+				MailHandleTask task = taskMap.get(randomKey);
+				
+				Future<String> future = executorService.submit(task);
+					
+				String result = "";
+				try {
+					if (future.isDone()) {
+						result = future.get();
+					}
+					else {
+						try {
+							Thread.sleep(1000*10);
+						} catch (InterruptedException e) {
+							if (log.isDebugEnabled()) {
+								log.debug(e);
+							}
+						}
+					}
+				} catch (InterruptedException e) {
+					if (log.isDebugEnabled()) {
+						log.debug(e);
+					}
+				} catch (ExecutionException e) {
+					if (log.isDebugEnabled()) {
+						log.debug(e);
+					}
+				}
+				if (Constant.SHUTDOWN == result) {
+					serverSocket.close();
+
+					executorService.shutdown();
+
+					break;
+				}
+
+			}
+
+		} catch (IOException e) {
+			if (log.isDebugEnabled()) {
+				log.debug(e);
+			}
+		}
+		return 0;
+	}
+	
+}
