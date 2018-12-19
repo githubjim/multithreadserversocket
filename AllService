@@ -50,35 +50,51 @@ public class AllService {
 		executorService = Executors.newFixedThreadPool(pool_count);
 
 		try {
+			
 			serverSocket = new ServerSocket(port);
 
-			Map<Integer, PostTask> taskMap = new HashMap<Integer, PostTask>();
+			Map<Integer, MailHandleTask> taskMap = new HashMap<Integer, MailHandleTask>();
 			for (int i = 0; i < pool_count; i++) {
-				PostTask task = new PostTask(i, updateDAO,
-						serverSocket, pros);
+				MailHandleTask task = new MailHandleTask(i, pros, serverSocket,
+						updateDAO, eMailSession, messageVistor);
 				taskMap.put(i, task);
 			}
+			
+			Map<Integer, Future<String>> futureMap = new HashMap<Integer,Future<String>>();
 
 			Random random = new Random();
 			List<Integer> keys = new ArrayList<Integer>(taskMap.keySet());
 			while (true) {
 				Integer randomKey = keys.get(random.nextInt(keys.size()));
 				MailHandleTask task = taskMap.get(randomKey);
-				
+
 				Future<String> future = executorService.submit(task);
-					
+				if (null == futureMap.get(task.getTaskId())) {
+					futureMap.put(task.getTaskId(), future);
+				}
+
 				String result = "";
 				try {
-					if (future.isDone()) {
-						result = future.get();
-					}
-					else {
-						try {
-							Thread.sleep(1000*10);
-						} catch (InterruptedException e) {
-							if (log.isDebugEnabled()) {
-								log.debug(e);
+					int j=0;
+					int max = futureMap.size();
+					while (true) {
+						for (;j<max;j++) {
+							Future<String> futuref = futureMap.get(j); 
+							if (null != futuref) {
+							if (futuref.isDone() ) {
+								result = futuref.get();
+								futureMap.remove(j);
+								max--;
+								break;
 							}
+							}
+						}
+						if (max < pool_count) {
+							break;
+						}
+						else {
+							// ここにsleepいれた方がよい
+							j = 0;
 						}
 					}
 				} catch (InterruptedException e) {
@@ -90,7 +106,7 @@ public class AllService {
 						log.debug(e);
 					}
 				}
-				if (Constant.SHUTDOWN == result) {
+				if (Constants.SHUTDOWN == result) {
 					serverSocket.close();
 
 					executorService.shutdown();
@@ -99,6 +115,8 @@ public class AllService {
 				}
 
 			}
+
+		
 
 		} catch (IOException e) {
 			if (log.isDebugEnabled()) {
